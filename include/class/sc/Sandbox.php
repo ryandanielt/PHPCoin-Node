@@ -480,6 +480,26 @@ class Sandbox {
         return $decoded;
     }
 
+    private static function readGrowingFile($handle)
+    {
+        if (!is_resource($handle)) {
+            return '';
+        }
+        $chunk = '';
+        while (!feof($handle)) {
+            $data = fread($handle, 8192);
+            if ($data === false || $data === '') {
+                break;
+            }
+            $chunk .= $data;
+        }
+        $pos = ftell($handle);
+        if ($pos !== false) {
+            fseek($handle, $pos);
+        }
+        return $chunk;
+    }
+
     static function runDapp($php_file,$input,$allowed_files,$debug=false,$rpcHandler=null)
     {
 
@@ -513,6 +533,10 @@ class Sandbox {
 			if ($resolved !== false) $basedirs[] = $resolved;
 		}
 		$basedirs[] = $bootstrapPath;
+		$tmpReal = realpath($dappTmp);
+		if ($tmpReal !== false) {
+			$basedirs[] = $tmpReal;
+		}
 		$openBasedir = implode(PATH_SEPARATOR, array_values(array_unique($basedirs)));
 		$disabledFunctions = implode(',', [
 			'exec', 'passthru', 'shell_exec', 'system', 'proc_open', 'popen',
@@ -549,9 +573,28 @@ class Sandbox {
 		}
 
 		$networkEnv = defined('NETWORK') ? NETWORK : 'mainnet';
-		$descriptors = [
-			0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w'],
-		];
+		$useFiles = PHP_OS_FAMILY === 'Windows';
+		$stdoutFile = null;
+		$stderrFile = null;
+		$outRead = null;
+		$errRead = null;
+		if ($useFiles) {
+			$stdoutFile = $dappTmp.'/stdout.'.getmypid().'.'.bin2hex(random_bytes(4));
+			$stderrFile = $dappTmp.'/stderr.'.getmypid().'.'.bin2hex(random_bytes(4));
+			@file_put_contents($stdoutFile, '');
+			@file_put_contents($stderrFile, '');
+			$descriptors = [
+				0 => ['pipe', 'r'],
+				1 => ['file', $stdoutFile, 'w'],
+				2 => ['file', $stderrFile, 'w'],
+			];
+		} else {
+			$descriptors = [
+				0 => ['pipe', 'r'],
+				1 => ['pipe', 'w'],
+				2 => ['pipe', 'w'],
+			];
+		}
 		if (PHP_OS_FAMILY === 'Windows') {
 			$openBasedirWin = implode(';', array_map(function ($part) {
 				return str_replace('\\', '/', $part);
@@ -566,6 +609,8 @@ class Sandbox {
 				'-d', 'disable_functions=' . $disabledFunctions,
 				'-d', 'allow_url_fopen=0',
 				'-d', 'allow_url_include=0',
+				'-d', 'output_buffering=0',
+				'-d', 'implicit_flush=1',
 				'-d', 'max_execution_time=5',
 				'-d', 'memory_limit=32M',
 			];
@@ -593,6 +638,7 @@ class Sandbox {
 				.' -d upload_tmp_dir='.escapeshellarg($dappTmp)
 				.' -d disable_functions='.escapeshellarg($disabledFunctions)
 				.' -d allow_url_fopen=0 -d allow_url_include=0'
+				.' -d output_buffering=0 -d implicit_flush=1'
 				.' -d max_execution_time=5 -d memory_limit=32M '
 				. $debugCmd . ' '
 				.escapeshellarg($phpFile);
@@ -603,18 +649,38 @@ class Sandbox {
 		}
 		if ($proc === false) throw new RuntimeException('Unable to start dapp sandbox');
 
+		if ($useFiles) {
+			$outRead = fopen($stdoutFile, 'rb');
+			$errRead = fopen($stderrFile, 'rb');
+			if ($outRead === false || $errRead === false) {
+				if (is_resource($pipes[0])) fclose($pipes[0]);
+				@proc_close($proc);
+				throw new RuntimeException('Unable to read dapp sandbox output');
+			}
+		} else {
+			stream_set_blocking($pipes[1], false);
+			stream_set_blocking($pipes[2], false);
+		}
+
 		fwrite($pipes[0], $inputJson."\n");
 		fflush($pipes[0]);
-		stream_set_blocking($pipes[1], false);
-		stream_set_blocking($pipes[2], false);
 		$output = '';
 		$stdoutBuffer = '';
 		$errors = '';
 		$deadline = microtime(true) + 6.0;
 		$maxOutput = 2 * 1024 * 1024;
 		$failed = null;
+		$killPid = null;
 		while (true) {
-			$stdoutBuffer .= (string) fread($pipes[1], 8192);
+			if ($useFiles) {
+				clearstatcache(true, $stdoutFile);
+				clearstatcache(true, $stderrFile);
+				$stdoutBuffer .= self::readGrowingFile($outRead);
+				$errors .= self::readGrowingFile($errRead);
+			} else {
+				$stdoutBuffer .= (string) fread($pipes[1], 8192);
+				$errors .= (string) fread($pipes[2], 8192);
+			}
 			while (($newline = strpos($stdoutBuffer, "\n")) !== false) {
 				$line = substr($stdoutBuffer, 0, $newline);
 				$stdoutBuffer = substr($stdoutBuffer, $newline + 1);
@@ -633,30 +699,46 @@ class Sandbox {
 					$output .= $line."\n";
 				}
 			}
-			$errors .= (string) fread($pipes[2], 8192);
 			if (strlen($output) + strlen($errors) > $maxOutput) {
 				$failed = 'Dapp output limit exceeded';
+				$status = proc_get_status($proc);
+				$killPid = $status['pid'] ?? null;
 				proc_terminate($proc, 9);
 				break;
 			}
 			$status = proc_get_status($proc);
 			if (!$status['running']) {
-				$stdoutBuffer .= (string) stream_get_contents($pipes[1]);
+				if ($useFiles) {
+					$stdoutBuffer .= self::readGrowingFile($outRead);
+					$errors .= self::readGrowingFile($errRead);
+				} else {
+					$stdoutBuffer .= is_resource($pipes[1]) ? (string) stream_get_contents($pipes[1]) : '';
+					$errors .= is_resource($pipes[2]) ? (string) stream_get_contents($pipes[2]) : '';
+				}
 				$output .= $stdoutBuffer;
-				$errors .= (string) stream_get_contents($pipes[2]);
 				break;
 			}
 			if (microtime(true) >= $deadline) {
 				$failed = 'Dapp execution timed out';
+				$killPid = $status['pid'] ?? null;
 				proc_terminate($proc, 9);
 				break;
 			}
 			usleep(10000);
 		}
-		fclose($pipes[0]);
-		fclose($pipes[1]);
-		fclose($pipes[2]);
-		proc_close($proc);
+		if ($failed !== null && PHP_OS_FAMILY === 'Windows' && !empty($killPid)) {
+			@exec('taskkill /F /T /PID '.(int)$killPid.' 2>NUL');
+		}
+		if (is_resource($outRead)) fclose($outRead);
+		if (is_resource($errRead)) fclose($errRead);
+		if (is_resource($pipes[0])) fclose($pipes[0]);
+		if (!$useFiles) {
+			if (is_resource($pipes[1])) fclose($pipes[1]);
+			if (is_resource($pipes[2])) fclose($pipes[2]);
+		}
+		@proc_close($proc);
+		if ($stdoutFile) @unlink($stdoutFile);
+		if ($stderrFile) @unlink($stderrFile);
 		if ($failed !== null) {
 			_log('Sandbox: '.$failed);
 			return 'Dapp execution failed';

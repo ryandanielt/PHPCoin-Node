@@ -253,7 +253,7 @@ function dapps_exec_fn_rpc($name, ...$params) {
 	$encoded = json_encode($request);
 	if($encoded === false) return false;
 	echo "\nDAPPS_RPC:".base64_encode($encoded)."\n";
-	flush();
+	dapps_rpc_flush();
 	$response = fgets(STDIN);
 	if($response === false || strpos($response, 'DAPPS_RPC_RESPONSE:') !== 0) return false;
 	$payload = base64_decode(trim(substr($response, 19)), true);
@@ -270,7 +270,7 @@ function dapps_get_random_peer() {
 	$request = json_encode(['type'=>'peers']);
 	if($request === false) throw new Exception('Can not build peers request');
 	echo "\nDAPPS_RPC:".base64_encode($request)."\n";
-	flush();
+	dapps_rpc_flush();
 	$frame = fgets(STDIN);
 	$payload = $frame !== false && strpos($frame, 'DAPPS_RPC_RESPONSE:') === 0
 		? base64_decode(trim(substr($frame, 19)), true) : false;
@@ -296,6 +296,13 @@ function dapps_get_random_peer() {
 	return $rand_peer;
 }
 
+function dapps_rpc_flush() {
+	flush();
+	if (defined('STDOUT')) {
+		@fflush(STDOUT);
+	}
+}
+
 function dapps_rpc_http($method, $api, $node, $data = null) {
 	$request = [
 		'type' => 'http',
@@ -307,7 +314,7 @@ function dapps_rpc_http($method, $api, $node, $data = null) {
 	$encoded = json_encode($request);
 	if ($encoded === false) return false;
 	echo "\nDAPPS_RPC:".base64_encode($encoded)."\n";
-	flush();
+	dapps_rpc_flush();
 	$response = fgets(STDIN);
 	if ($response === false || strpos($response, 'DAPPS_RPC_RESPONSE:') !== 0) return false;
 	$payload = base64_decode(trim(substr($response, 19)), true);
@@ -326,7 +333,7 @@ function dapps_get_rpc($path, $query = [], $remote = false) {
 	]);
 	if($request === false) return false;
 	echo "\nDAPPS_RPC:".base64_encode($request)."\n";
-	flush();
+	dapps_rpc_flush();
 	$frame = fgets(STDIN);
 	$payload = $frame !== false && strpos($frame, 'DAPPS_RPC_RESPONSE:') === 0
 		? base64_decode(trim(substr($frame, 19)), true) : false;
@@ -350,7 +357,7 @@ function dapps_post_rpc($path, $query = [], $body = '', $remote = false, $phpcra
 	]);
 	if($request === false) return false;
 	echo "\nDAPPS_RPC:".base64_encode($request)."\n";
-	flush();
+	dapps_rpc_flush();
 	$frame = fgets(STDIN);
 	$payload = $frame !== false && strpos($frame, 'DAPPS_RPC_RESPONSE:') === 0
 		? base64_decode(trim(substr($frame, 19)), true) : false;
@@ -449,7 +456,7 @@ function dapps_sql_rpc($query, $params) {
 	$encoded = json_encode($request);
 	if($encoded === false) return false;
 	echo "\nDAPPS_RPC:".base64_encode($encoded)."\n";
-	flush();
+	dapps_rpc_flush();
 	$response = fgets(STDIN);
 	if($response === false || strpos($response, 'DAPPS_RPC_RESPONSE:') !== 0) return false;
 	$payload = base64_decode(trim(substr($response, 19)), true);
