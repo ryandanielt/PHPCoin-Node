@@ -16,6 +16,70 @@ require_once __DIR__ . '/StatePersistence.php';
 
 class Sandbox {
 
+    private static function phpBinary()
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            return 'php';
+        }
+        $dir = dirname(PHP_BINARY);
+        $candidates = [
+            $dir . DIRECTORY_SEPARATOR . 'php.exe',
+            $dir . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe',
+            $dir . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'php' . DIRECTORY_SEPARATOR . 'php.exe',
+        ];
+        if (preg_match('/php(?:-cgi|-win)?\.exe$/i', PHP_BINARY)) {
+            array_unshift($candidates, PHP_BINARY);
+        }
+        foreach ($candidates as $path) {
+            $real = realpath($path);
+            if ($real !== false && is_file($real) && preg_match('/php(?:-cgi)?\.exe$/i', $real)) {
+                return $real;
+            }
+        }
+        return 'php';
+    }
+
+    private static function phpCli()
+    {
+        $bin = self::phpBinary();
+        return PHP_OS_FAMILY === 'Windows' ? escapeshellarg($bin) : $bin;
+    }
+
+    private static function nullDevice()
+    {
+        return PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null';
+    }
+
+    private static function sandboxEnv($env)
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            return $env;
+        }
+        if (empty($env['PATH'])) {
+            $env['PATH'] = (string)getenv('PATH');
+        }
+        if (empty($env['SystemRoot'])) {
+            $env['SystemRoot'] = (string)(getenv('SystemRoot') ?: 'C:\\Windows');
+        }
+        return $env;
+    }
+
+    private static function windowsExtFlags()
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            return '';
+        }
+        $flags = '';
+        $extDir = ini_get('extension_dir');
+        if ($extDir !== false && $extDir !== '') {
+            $flags .= ' -d ' . escapeshellarg('extension_dir=' . $extDir);
+        }
+        foreach (['pdo_mysql', 'gmp', 'openssl', 'mbstring'] as $ext) {
+            $flags .= ' -d ' . escapeshellarg('extension=' . $ext);
+        }
+        return $flags;
+    }
+
     /**
      * Execute a method from a PHAR file in the sandbox
      *
@@ -171,7 +235,7 @@ class Sandbox {
         $contractFile = escapeshellarg($contract);
 
         // Build command with debug options if enabled
-        $cmd = "php -c $iniFile -d auto_prepend_file=$bootstrapFile";
+        $cmd = self::phpCli() . " -c $iniFile" . self::windowsExtFlags() . " -d auto_prepend_file=$bootstrapFile";
         if ($debug) {
             $cmd .= " -d error_reporting=" . E_ALL;
             // Enable Xdebug for CLI debugging
@@ -221,13 +285,13 @@ class Sandbox {
         $proc = proc_open(
             $cmd,
             [
-                0 => ($debug && $input_file) ? ['file', '/dev/null', 'r'] : ($use_stdin ? ['pipe','r'] : ['file', '/dev/null', 'r']),
+                0 => ($debug && $input_file) ? ['file', self::nullDevice(), 'r'] : ($use_stdin ? ['pipe','r'] : ['file', self::nullDevice(), 'r']),
                 1 => ['pipe','w'],
                 2 => ['pipe','w']
             ],
             $pipes,
             $tmp,
-            $env  // Pass environment variables
+            self::sandboxEnv($env)
         );
 
         if ($use_stdin) {
@@ -307,7 +371,7 @@ class Sandbox {
         // Execute PHAR directly - sandbox bootstrap runs first via auto_prepend_file
         // This ensures all security restrictions apply
         // Build command with debug options if enabled
-        $cmd = "php -c $iniFile -d auto_prepend_file=$bootstrapFile";
+        $cmd = self::phpCli() . " -c $iniFile" . self::windowsExtFlags() . " -d auto_prepend_file=$bootstrapFile";
         $cmd .= " -d max_execution_time=" . SC_MAX_EXEC_TIME;
         $cmd .= " -d memory_limit=" . SC_MEMORY_LIMIT;
         if ($debug) {
@@ -359,13 +423,13 @@ class Sandbox {
         $proc = proc_open(
             $cmd,
             [
-                0 => $use_stdin ? ['pipe','r'] : ['file', '/dev/null', 'r'],
+                0 => $use_stdin ? ['pipe','r'] : ['file', self::nullDevice(), 'r'],
                 1 => ['pipe','w'],
                 2 => ['pipe','w']
             ],
             $pipes,
             null,  // Use current working directory
-            $env   // Pass environment variables
+            self::sandboxEnv($env)
         );
 
         if ($use_stdin) {
@@ -428,70 +492,82 @@ class Sandbox {
         if (pathinfo($php_file, PATHINFO_EXTENSION) !== 'php') {
             throw new InvalidArgumentException("File is not a PHAR archive: $php_file");
         }
-        $iniFile = $debug ? "php-sandbox-debug.ini" : "php-sandbox.ini";
         $sandboxDir = __DIR__;
-        $bootstrapFile = escapeshellarg("$sandboxDir/sandbox_dapp_bootstrap.php");
-        $cmd = "php -c $iniFile -d auto_prepend_file=$bootstrapFile";
+        $bootstrapPath = $sandboxDir . DIRECTORY_SEPARATOR . "sandbox_dapp_bootstrap.php";
         $dapps_dir = Dapps::getDappsDir();
 
-        $allowed_files[]=$bootstrapFile;
+        $basedirParts = array_merge([$dapps_dir, $sandboxDir, $bootstrapPath], $allowed_files);
+        $basedirParts = array_values(array_unique(array_filter($basedirParts)));
 
-        $allowed_files_list = implode(":", $allowed_files);
-        $cmd .= " -d open_basedir=" . $dapps_dir.":".$allowed_files_list;
-//        $debug=false;
+        $disable = "exec,passthru,shell_exec,system,proc_open,popen,curl_exec,curl_multi_exec,parse_ini_file,show_source,set_time_limit,ini_set";
+        $openBasedir = implode(PATH_SEPARATOR, array_map(function ($part) {
+            return str_replace('\\', '/', $part);
+        }, $basedirParts));
+        // Windows PATH_SEPARATOR is ';', which is also an INI comment. Quote the value
+        // and launch via argv + bypass_shell so cmd.exe never splits on ';'.
+        $openBasedirDirective = PHP_OS_FAMILY === 'Windows'
+            ? 'open_basedir="' . $openBasedir . '"'
+            : 'open_basedir=' . $openBasedir;
+
+        $argv = [
+            self::phpBinary(),
+            '-d', 'disable_functions=' . $disable,
+            '-d', $openBasedirDirective,
+            '-d', 'max_execution_time=5',
+            '-d', 'memory_limit=128M',
+            '-d', 'auto_prepend_file=' . $bootstrapPath,
+        ];
         if ($debug) {
-            $cmd .= " -d error_reporting=" . E_ALL;
-            // Enable Xdebug for CLI debugging
+            $argv[] = '-d';
+            $argv[] = 'error_reporting=' . E_ALL;
             if (extension_loaded('xdebug')) {
-                $cmd .= " -d xdebug.mode=debug";
-                $cmd .= " -d xdebug.start_with_request=yes";
-                $cmd .= " -d xdebug.idekey=PHPSTORM";
-                // Xdebug will connect to IDE on default port 9003 (Xdebug 3.x) or 9000 (Xdebug 2.x)
-                // Can be overridden with XDEBUG_CONFIG environment variable
+                $argv[] = '-d';
+                $argv[] = 'xdebug.mode=debug';
+                $argv[] = '-d';
+                $argv[] = 'xdebug.start_with_request=yes';
+                $argv[] = '-d';
+                $argv[] = 'xdebug.idekey=PHPSTORM';
             }
         }
-        $phpFileEscaped = escapeshellarg($php_file);
-        $cmd .= " $phpFileEscaped";
+        $argv[] = $php_file;
+        $cmd = implode(' ', array_map('escapeshellarg', $argv));
 
-        $use_stdin = !isset($env['SANDBOX_INPUT_DATA']);
-
-        // Prepare environment variables (for PhpStorm path mapping)
         $env = $_ENV;
         $input_json = json_encode($input);
         $input_size = strlen($input_json);
         $max_env_size = 32 * 1024; // 32KB limit for env vars (conservative)
 
         if ($debug && extension_loaded('xdebug')) {
-            // Set PHP_IDE_CONFIG for PhpStorm path mapping
-            // Default server name, can be overridden with PHP_IDE_CONFIG env var
             $php_ide_config = getenv('PHP_IDE_CONFIG') ?: 'serverName=PHAR_Sandbox';
             $env['PHP_IDE_CONFIG'] = $php_ide_config;
-            // Set XDEBUG_SESSION to force Xdebug to start
             $env['XDEBUG_SESSION'] = 'PHPSTORM';
-
-            // Only use environment variable for small inputs (to avoid "Argument list too long" error)
-            // For large inputs, use STDIN (Xdebug works fine with STDIN - it operates at PHP execution level, not I/O level)
             if ($input_size <= $max_env_size) {
                 $env['SANDBOX_INPUT_DATA'] = $input_json;
             }
-            // For large inputs, we'll use STDIN (handled below) - Xdebug will work normally
         } elseif ($input_size <= $max_env_size) {
-            // Production mode: use env var for small inputs (more efficient)
             $env['SANDBOX_INPUT_DATA'] = $input_json;
         }
 
+        $use_stdin = !isset($env['SANDBOX_INPUT_DATA']);
+        $procOpts = PHP_OS_FAMILY === 'Windows' ? ['bypass_shell' => true] : [];
 
         $proc = proc_open(
-            $cmd,
+            $argv,
             [
-                0 => $use_stdin ? ['pipe','r'] : ['file', '/dev/null', 'r'],
+                0 => $use_stdin ? ['pipe','r'] : ['file', self::nullDevice(), 'r'],
                 1 => ['pipe','w'],
                 2 => ['pipe','w']
             ],
             $pipes,
-            null,  // Use current working directory
-            $env   // Pass environment variables
+            null,
+            self::sandboxEnv($env),
+            $procOpts
         );
+
+        if ($proc === false) {
+            _log("Dapps sandbox proc_open failed cmd=$cmd");
+            return "";
+        }
 
         if ($use_stdin) {
             // Send input via STDIN (for large inputs or when env var not set)
@@ -506,6 +582,10 @@ class Sandbox {
         fclose($pipes[2]);
 
         proc_close($proc);
+
+        if ($errors && trim($errors) !== '') {
+            _log("Dapps sandbox stderr: " . trim($errors));
+        }
 
         return $output;
 

@@ -266,11 +266,11 @@ $redirect=$_SERVER['REQUEST_URI'];
                                 $address_trunc = substr($session_address, 0, 6) . "..." . substr($session_address, -6);
                                 ?>
                                 <li class="nav-item dropdown" id="account-address">
-                                    <a class="nav-link dropdown-toggle arrow-none" title="<?php echo $session_address ?>"
-                                       href="/apps/explorer/address.php?address=<?php echo $session_address ?>" role="button" target="_blank">
+                                    <a class="nav-link dropdown-toggle arrow-none" title="<?php echo h($session_address) ?>"
+                                       href="/apps/explorer/address.php?address=<?php echo urlencode($session_address) ?>" role="button" target="_blank">
                                         <i class="fas fa-user me-2"></i>
                                         <span>
-                                            <?php echo $address_trunc ?>
+                                            <?php echo h($address_trunc) ?>
                                         </span>
                                     </a>
                                 </li>
@@ -283,12 +283,12 @@ $redirect=$_SERVER['REQUEST_URI'];
                                     </span>
                                 </li>
                                 <li class="nav-item d-flex align-items-center">
-                                    <a href="/dapps.php?url=<?php echo GATEWAY ?>/legacywallet?action=top_logout&redirect=<?php echo urlencode($_SERVER['REQUEST_URI']) ?>"
+                                    <a href="/apps/common/logout.php?redirect=<?php echo urlencode($_SERVER['REQUEST_URI']) ?>"
                                        class="btn btn-outline-primary">Logout</a>
                                 </li>
                             <?php } else { ?>
                                 <li class="nav-item d-flex align-items-center">
-                                    <a href="/dapps.php?url=<?php echo GATEWAY ?>/legacywallet?action=top_login&redirect=<?php echo urlencode($redirect) ?>"
+                                    <a href="/apps/common/login.php?app=<?php echo urlencode(defined('APP_NAME') ? APP_NAME : 'Node') ?>&redirect=<?php echo urlencode($redirect) ?>"
                                        class="btn btn-primary">Login</a>
                                 </li>
                             <?php } ?>

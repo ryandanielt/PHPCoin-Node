@@ -257,7 +257,10 @@ class Dapps extends Task
 				sleep(5);
 				$uri = str_replace(["\r", "\n"], '', (string)($_SERVER['REQUEST_URI'] ?? '/'));
 				header("location: " . $uri);
+				exit;
 			}
+			header("HTTP/1.1 503 Service Unavailable");
+			echo "This dapp is not installed on this node.";
 			return;
 		}
 
@@ -277,6 +280,8 @@ class Dapps extends Task
 			if(!Dapps::isLocal($dapps_id)) {
 				Dapps::downloadDapps($dapps_id);
 			}
+			header("HTTP/1.1 404 Not Found");
+			echo "Dapp file not found.";
 			return;
 		}
 
@@ -384,6 +389,7 @@ class Dapps extends Task
 				ROOT . "/include/network_chain_id.inc.php",
 				ROOT . "/tmp/sessions",
 				sys_get_temp_dir(),
+				ROOT . "/include/class/Security.php",
 				ROOT . "/include/class/CommonSessionHandler.php",
 			];
 

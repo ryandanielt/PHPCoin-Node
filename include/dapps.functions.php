@@ -12,6 +12,7 @@ if(!defined("CHAIN_ID")) {
 
 require_once ROOT . "/include/coinspec.inc.php";
 require_once ROOT . "/include/common.functions.php";
+require_once ROOT . "/include/class/Security.php";
 require_once ROOT . "/include/class/CommonSessionHandler.php";
 
 if(php_sapi_name() == "cli") {
