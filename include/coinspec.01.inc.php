@@ -4,7 +4,7 @@
 const NETWORK = "testnet";
 if(!defined('CHAIN_ID')) define('CHAIN_ID', "01");
 const COIN_PORT = "";
-const VERSION = "1.10.5";
+const VERSION = "1.11.1";
 const BUILD_VERSION = 525;
 const MIN_VERSION = "1.9.2";
 const DEVELOPMENT = false;

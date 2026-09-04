@@ -19,6 +19,14 @@ date_default_timezone_set("UTC");
 require_once dirname(__DIR__).'/vendor/autoload.php';
 define("ROOT", dirname(__DIR__));
 
+if (PHP_OS_FAMILY === 'Windows') {
+    $phpDir = dirname(PHP_BINARY);
+    $path = (string)getenv('PATH');
+    if ($phpDir !== '' && stripos($path, $phpDir) !== 0) {
+        putenv('PATH=' . $phpDir . PATH_SEPARATOR . $path);
+    }
+}
+
  error_reporting(E_ALL & ~E_NOTICE);
 ini_set('display_errors', 0);
 if (defined('DEVELOPMENT') && DEVELOPMENT) {
@@ -133,12 +141,14 @@ if($block) {
     }
 }
 
-if(!defined("CRON")) {
+if(!defined("CRON") && PHP_OS_FAMILY !== 'Windows') {
     Nodeutil::runAtInterval("check-cron", 60, function () {
-        $userInfo = posix_getpwuid(posix_geteuid());
-        if($userInfo['name']!="www-data") {
-            _log("Not web user", 2);
-            return;
+        if (function_exists('posix_getpwuid') && function_exists('posix_geteuid')) {
+            $userInfo = posix_getpwuid(posix_geteuid());
+            if(!$userInfo || $userInfo['name']!="www-data") {
+                _log("Not web user", 2);
+                return;
+            }
         }
         Util::checkCron();
     });
