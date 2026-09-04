@@ -500,37 +500,6 @@ class Sandbox {
         $basedirParts = array_values(array_unique(array_filter($basedirParts)));
 
         $disable = "exec,passthru,shell_exec,system,proc_open,popen,curl_exec,curl_multi_exec,parse_ini_file,show_source,set_time_limit,ini_set";
-        $openBasedir = implode(PATH_SEPARATOR, array_map(function ($part) {
-            return str_replace('\\', '/', $part);
-        }, $basedirParts));
-        // Windows PATH_SEPARATOR is ';', which is also an INI comment. Quote the value
-        // and launch via argv + bypass_shell so cmd.exe never splits on ';'.
-        $openBasedirDirective = PHP_OS_FAMILY === 'Windows'
-            ? 'open_basedir="' . $openBasedir . '"'
-            : 'open_basedir=' . $openBasedir;
-
-        $argv = [
-            self::phpBinary(),
-            '-d', 'disable_functions=' . $disable,
-            '-d', $openBasedirDirective,
-            '-d', 'max_execution_time=5',
-            '-d', 'memory_limit=128M',
-            '-d', 'auto_prepend_file=' . $bootstrapPath,
-        ];
-        if ($debug) {
-            $argv[] = '-d';
-            $argv[] = 'error_reporting=' . E_ALL;
-            if (extension_loaded('xdebug')) {
-                $argv[] = '-d';
-                $argv[] = 'xdebug.mode=debug';
-                $argv[] = '-d';
-                $argv[] = 'xdebug.start_with_request=yes';
-                $argv[] = '-d';
-                $argv[] = 'xdebug.idekey=PHPSTORM';
-            }
-        }
-        $argv[] = $php_file;
-        $cmd = implode(' ', array_map('escapeshellarg', $argv));
 
         $env = $_ENV;
         $input_json = json_encode($input);
@@ -549,20 +518,56 @@ class Sandbox {
         }
 
         $use_stdin = !isset($env['SANDBOX_INPUT_DATA']);
-        $procOpts = PHP_OS_FAMILY === 'Windows' ? ['bypass_shell' => true] : [];
+        $descriptors = [
+            0 => $use_stdin ? ['pipe','r'] : ['file', self::nullDevice(), 'r'],
+            1 => ['pipe','w'],
+            2 => ['pipe','w']
+        ];
 
-        $proc = proc_open(
-            $argv,
-            [
-                0 => $use_stdin ? ['pipe','r'] : ['file', self::nullDevice(), 'r'],
-                1 => ['pipe','w'],
-                2 => ['pipe','w']
-            ],
-            $pipes,
-            null,
-            self::sandboxEnv($env),
-            $procOpts
-        );
+        if (PHP_OS_FAMILY === 'Windows') {
+            $openBasedir = implode(';', array_map(function ($part) {
+                return str_replace('\\', '/', $part);
+            }, $basedirParts));
+            $argv = [
+                self::phpBinary(),
+                '-d', 'disable_functions=' . $disable,
+                '-d', 'open_basedir="' . $openBasedir . '"',
+                '-d', 'max_execution_time=5',
+                '-d', 'memory_limit=128M',
+                '-d', 'auto_prepend_file=' . $bootstrapPath,
+            ];
+            if ($debug) {
+                $argv[] = '-d';
+                $argv[] = 'error_reporting=' . E_ALL;
+                if (extension_loaded('xdebug')) {
+                    $argv[] = '-d';
+                    $argv[] = 'xdebug.mode=debug';
+                    $argv[] = '-d';
+                    $argv[] = 'xdebug.start_with_request=yes';
+                    $argv[] = '-d';
+                    $argv[] = 'xdebug.idekey=PHPSTORM';
+                }
+            }
+            $argv[] = $php_file;
+            $cmd = implode(' ', array_map('escapeshellarg', $argv));
+            $proc = proc_open($argv, $descriptors, $pipes, null, self::sandboxEnv($env), ['bypass_shell' => true]);
+        } else {
+            $cmd = self::phpCli()
+                . " -d " . escapeshellarg("disable_functions=" . $disable)
+                . " -d " . escapeshellarg("open_basedir=" . implode(PATH_SEPARATOR, $basedirParts))
+                . " -d max_execution_time=5 -d memory_limit=128M"
+                . " -d auto_prepend_file=" . escapeshellarg($bootstrapPath);
+            if ($debug) {
+                $cmd .= " -d error_reporting=" . E_ALL;
+                if (extension_loaded('xdebug')) {
+                    $cmd .= " -d xdebug.mode=debug";
+                    $cmd .= " -d xdebug.start_with_request=yes";
+                    $cmd .= " -d xdebug.idekey=PHPSTORM";
+                }
+            }
+            $cmd .= " " . escapeshellarg($php_file);
+            $proc = proc_open($cmd, $descriptors, $pipes, null, self::sandboxEnv($env));
+        }
 
         if ($proc === false) {
             _log("Dapps sandbox proc_open failed cmd=$cmd");
