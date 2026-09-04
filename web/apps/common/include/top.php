@@ -244,6 +244,13 @@ $redirect=$_SERVER['REQUEST_URI'];
                                     <i class="fas fa-wallet me-2"></i><span data-key="t-dashboards">Wallet</span>
                                 </a>
                             </li>
+                            <?php if (defined('FEATURE_SMART_CONTRACTS') && FEATURE_SMART_CONTRACTS) { ?>
+                            <li class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle arrow-none <?php if (APP_NAME == "Dex") { ?>active<?php } ?>" href="/apps/dex" id="topnav-dex" role="button">
+                                    <i class="fas fa-exchange-alt me-2"></i><span data-key="t-dashboards">DEX</span>
+                                </a>
+                            </li>
+                            <?php } ?>
                             <li class="nav-item dropdown">
                                 <a class="nav-link dropdown-toggle arrow-none" href="/dapps.php?url=<?php echo MAIN_DAPPS_ID ?>/faucet" id="topnav-dashboard" role="button">
                                     <i class="fas fa-faucet me-2"></i><span data-key="t-dashboards">Faucet</span>

@@ -122,5 +122,13 @@ $_config['dapps_private_key']="";
 $_config['dapps_anonymous']=false;
 $_config['dapps_disable_auto_propagate']=true;
 
+/**
+ * Serve the local DEX UI at /apps/dex and advertise this node as a DEX host.
+ * Trading still happens on the on-chain contract; disabling this only hides the UI/peer flag.
+ */
+$_config['dex_node']=true;
+// Optional override for the official DEX contract address (otherwise DEX_CONTRACT_ADDRESS in coinspec)
+//$_config['dex_contract']="";
+
 // set server to maintenance mode
 //$_config['maintenance']=1;

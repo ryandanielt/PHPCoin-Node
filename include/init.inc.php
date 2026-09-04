@@ -110,6 +110,7 @@ $_config = load_db_config();
 //check db update
 _log("checking schema update", 5);
 require_once __DIR__.'/schema.inc.php';
+require_once __DIR__.'/class/Dex.php';
 
 
 // nothing is allowed while in maintenance

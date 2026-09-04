@@ -11,7 +11,7 @@ const NETWORK = "mainnet";
 const CHAIN_ID = "00";
 const COIN_PORT = "";
 const VERSION = "1.11.2";
-const BUILD_VERSION = 408;
+const BUILD_VERSION = 409;
 const MIN_VERSION = "1.10.2";
 const DEVELOPMENT = false;
 const XDEBUG = "";
@@ -87,6 +87,11 @@ const UPDATE_15_EXTENDED_SC_HASH_V2=0;
 const UPDATE_16_SC_TXS_SORT=0;
 const UPDATE_17_DEV_MINER_START=PHP_INT_MAX;
 const UPDATE_18_SC_DEX_APIS=0;
+
+# Official DEX: empty until the contract is deployed, then pin the address.
+# Nodes may override with $_config['dex_contract']. Trading UI only talks to this market.
+const DEX_CONTRACT_ADDRESS = "";
+const DEX_TEMPLATE_CLASS = "SimpleOfferDex";
 
 const DEV_PUBLIC_KEY = "PZ8Tyr4Nx8MHsRAGMpZmZ6TWY63dXWSCyao5hHHJd9axKhC1c5emTgT4hT7k7EvXiZrjTJSGEPmz9K1swEDQi8j14vCRwUisMsvHr4P5kirrDawM3NJiknWR";
 
